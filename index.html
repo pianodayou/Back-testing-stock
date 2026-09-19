@@ -1042,7 +1042,7 @@ function buildMultiCharts(){
       '<span class="num" id="mEq'+i+'" style="font-size:12.5px">—</span>'+
       '<span class="num" id="mRet'+i+'" style="font-size:12.5px;margin-left:6px">—</span></div>'+
       '<div class="row" style="margin-bottom:4px;font-size:11px;color:var(--tx2);gap:8px">'+
-      '<span>평단 <b class="num" id="mAvg'+i+'" style="color:var(--tx)">—</b></span>'+
+      '<span>평단 <b class="num" id="mAvg'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mAvgRet'+i+'">—</b></span>'+
       '<span>주식 <b class="num" id="mStk'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mStkP'+i+'" style="color:var(--tx)">—</b></span>'+
       '<span>현금 <b class="num" id="mCsh'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mCshP'+i+'" style="color:var(--tx)">—</b></span>'+
       '</div>'+
@@ -1122,9 +1122,9 @@ function multiEquityAtDate(sl, curDate){
   const avg = sl.avgArr && sl.avgArr[idx]!=null ? sl.avgArr[idx] : 0;
   const price = sl.rows[idx] ? sl.rows[idx].c : 0;
   const stockVal = qty*price;
-  return { eq, base: sl.initCash+inj, cash, qty, avg, stockVal };
+  return { eq, base: sl.initCash+inj, cash, qty, avg, stockVal, price };
 }
-function drawMultiChart(cv, sl, gWindow){
+function drawMultiChart(cv, sl, gWindow, avgPrice){
   const dpr=window.devicePixelRatio||1, r=cv.getBoundingClientRect();
   cv.width=r.width*dpr; cv.height=r.height*dpr;
   const x=cv.getContext('2d'); x.setTransform(dpr,0,0,dpr,0,0);
@@ -1151,6 +1151,14 @@ function drawMultiChart(cv, sl, gWindow){
     const y1=Y(b.o), y2=Y(b.c);
     x.fillRect(cx-bw/2, Math.min(y1,y2), bw, Math.max(1,Math.abs(y2-y1)));
   });
+  if(avgPrice>0 && avgPrice>=lo && avgPrice<=hi){
+    const ay=Y(avgPrice);
+    x.strokeStyle='#93A3B8'; x.lineWidth=1; x.setLineDash([3,3]);
+    x.beginPath(); x.moveTo(0,ay); x.lineTo(W,ay); x.stroke();
+    x.setLineDash([]);
+    x.fillStyle='#93A3B8'; x.font='9px sans-serif'; x.textAlign='left'; x.textBaseline='bottom';
+    x.fillText('평단 '+avgPrice, 3, ay-2);
+  }
   const winIdx=new Map(gWindow.map((d,k)=>[d,k]));
   (sl.log||[]).forEach(t=>{
     const k=winIdx.get(t.d); if(k==null) return;
@@ -1176,13 +1184,18 @@ function renderMulti(){
   MULTI.slots.forEach((sl,i)=>{
     if(!sl) return;
     const cv=$('#mCv'+i); if(!cv) return;
-    drawMultiChart(cv, sl, gWindow);
-    const {eq, base, cash, qty, avg, stockVal}=multiEquityAtDate(sl, curDate), ret=(eq-base)/base*100;
+    const {eq, base, cash, qty, avg, stockVal, price}=multiEquityAtDate(sl, curDate), ret=(eq-base)/base*100;
+    drawMultiChart(cv, sl, gWindow, qty>0?avg:0);
     $('#mEq'+i).textContent=fmt(eq,0);
     $('#mRet'+i).textContent=pct(ret); $('#mRet'+i).className='num '+cls(ret);
     const stockPct=eq>0?stockVal/eq*100:0, cashPct=eq>0?cash/eq*100:0;
-    const elAvg=$('#mAvg'+i), elStk=$('#mStk'+i), elStkP=$('#mStkP'+i), elCsh=$('#mCsh'+i), elCshP=$('#mCshP'+i);
+    const posRet=(qty>0&&avg>0)?(price-avg)/avg*100:null;
+    const elAvg=$('#mAvg'+i), elAvgRet=$('#mAvgRet'+i), elStk=$('#mStk'+i), elStkP=$('#mStkP'+i), elCsh=$('#mCsh'+i), elCshP=$('#mCshP'+i);
     if(elAvg) elAvg.textContent=qty>0?fmt(avg):'—';
+    if(elAvgRet){
+      if(posRet!=null){ elAvgRet.textContent=pct(posRet); elAvgRet.className='num '+cls(posRet); }
+      else { elAvgRet.textContent='—'; elAvgRet.className='num'; }
+    }
     if(elStk) elStk.textContent=fmt(stockVal,0);
     if(elStkP) elStkP.textContent='('+stockPct.toFixed(0)+'%)';
     if(elCsh) elCsh.textContent=fmt(cash,0);
