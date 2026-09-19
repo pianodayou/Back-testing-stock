@@ -233,8 +233,40 @@
     <button class="ghost" id="mLive" style="flex:1;display:none">현재로 ↦</button>
   </div>
   <div id="multiCharts"></div>
-  <p class="note">이미 끝까지 재생됐던 슬롯은 그 지점부터는 캔들만 계속 움직이고 평가금액은 마지막 기록값에서 멈춰 — 그 이후는 실제로 뭘 샀는지 모르니까 숫자를 지어내지 않는 거야.</p>
+  <p class="note">이미 끝까지 재생됐던 슬롯은 그 지점부터는 캔들만 계속 움직이고 평가금액은 마지막 기록값에서 멈춰 — 그 이후는 실제로 뭘 샀는지 모르니까 숫자를 지어내지 않는 거야. 각 슬롯의 "+ 가상 매매" 버튼으로 현재 재생 시점에 매수·매도를 끼워넣어볼 수 있어 — 매수는 그 시점 현금의 %, 매도는 그 시점 보유수량의 %로 계산되고, 그 뒤에 원래 있던 매매들도 전부 이 가상 매매가 반영된 현금·수량 기준으로 다시 계산돼.</p>
 </section>
+
+<div id="mTradeSheet" style="display:none;position:fixed;left:0;right:0;bottom:0;background:var(--panel);
+  border-top:1px solid var(--line);border-radius:14px 14px 0 0;padding:12px;z-index:20;box-shadow:0 -6px 20px rgba(0,0,0,.4)">
+  <div class="row" style="justify-content:space-between">
+    <b id="mTradeTitle" style="font-size:13px">가상 매매 끼워넣기</b>
+    <button class="ghost" id="mTradeClose" style="padding:3px 10px">닫기</button>
+  </div>
+  <div class="row"><label style="min-width:56px">날짜</label><input id="mTradeDate" type="text" placeholder="YYYY-MM-DD"></div>
+  <div class="chips" style="margin:6px 0">
+    <button class="ghost on" id="mTradeBuy" data-side="buy">매수</button>
+    <button class="ghost" id="mTradeSell" data-side="sell">매도</button>
+  </div>
+  <div class="row"><label style="min-width:56px" id="mTradePctLabel">현금 비중%</label><input id="mTradePct" type="number" placeholder="예: 20" step="any"></div>
+  <div class="row"><label style="min-width:56px">가격</label><input id="mTradePrice" type="number" placeholder="시가/종가 등" step="any"></div>
+  <p class="note" id="mTradeInfo" style="margin:6px 0"></p>
+  <div class="row" style="margin-top:8px">
+    <button class="ghost" id="mTradeConfirm" style="flex:1;background:#2F4A6B">끼워넣기</button>
+    <button class="ghost" id="mTradeClearAll" style="flex:1">이 슬롯 가상매매 전부 취소</button>
+  </div>
+  <button class="ghost" id="mTradeOpenLog" style="width:100%;margin-top:6px">원래 매매 기록에서 빼기...</button>
+</div>
+
+<div id="mLogSheet" style="display:none;position:fixed;left:0;right:0;bottom:0;top:15%;background:var(--panel);
+  border-top:1px solid var(--line);border-radius:14px 14px 0 0;padding:12px;z-index:21;box-shadow:0 -6px 20px rgba(0,0,0,.4);overflow-y:auto">
+  <div class="row" style="justify-content:space-between">
+    <b id="mLogTitle" style="font-size:13px">매매 기록에서 빼기</b>
+    <button class="ghost" id="mLogClose" style="padding:3px 10px">닫기</button>
+  </div>
+  <p class="note" style="margin:6px 0">뺀 매매는 그 시점부터 없었던 걸로 치고, 그 뒤 매매들이 전부 다시 계산돼.</p>
+  <table><thead><tr><th>일자</th><th>구분</th><th>가격</th><th>%</th><th></th></tr></thead>
+  <tbody id="mLogBody"></tbody></table>
+</div>
 
 <section id="s-data">
   <div class="row">
@@ -1046,10 +1078,12 @@ function buildMultiCharts(){
       '<span>주식 <b class="num" id="mStk'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mStkP'+i+'" style="color:var(--tx)">—</b></span>'+
       '<span>현금 <b class="num" id="mCsh'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mCshP'+i+'" style="color:var(--tx)">—</b></span>'+
       '</div>'+
-      '<canvas id="mCv'+i+'" style="width:100%;height:110px;border-radius:8px;background:#101722;display:block"></canvas>';
+      '<canvas id="mCv'+i+'" style="width:100%;height:110px;border-radius:8px;background:#101722;display:block"></canvas>'+
+      '<button class="ghost mTradeBtn" data-idx="'+i+'" style="width:100%;margin-top:4px;padding:5px;font-size:11px">매매 편집'+((sl.extraLog&&sl.extraLog.length)||(sl.excludedOid&&sl.excludedOid.size)?' (끼워넣음 '+((sl.extraLog&&sl.extraLog.length)||0)+' · 뺌 '+((sl.excludedOid&&sl.excludedOid.size)||0)+')':'')+'</button>';
     box.appendChild(wrap);
   });
   attachMultiDrag();
+  document.querySelectorAll('.mTradeBtn').forEach(b=>b.onclick=()=>openTradeSheet(+b.dataset.idx));
 }
 function addMonths(dateStr, months){
   const d=new Date(dateStr+'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth()+months);
@@ -1097,14 +1131,80 @@ async function loadMultiSlots(){
       const dateToIdx=new Map();
       rows.forEach((r,ix)=>{ if(r.t) dateToIdx.set(r.t, ix); });
       const sortedDates=rows.map(r=>r.t).filter(Boolean);
-      MULTI.slots[i]={ name:d.name, rows, dateToIdx, sortedDates,
-        log:d.st?.log||[], eq:d.st?.eq||[], injCum:d.st?.injCum||[], initCash:d.st?.initCash||100000,
-        cashArr:d.st?.cashArr||[], qtyArr:d.st?.qtyArr||[], avgArr:d.st?.avgArr||[] };
+      const origLog=(d.st?.log||[]).map((t,oi)=>({...t, _oid:oi})),
+        origEq=d.st?.eq||[], origInjCum=d.st?.injCum||[],
+        origCashArr=d.st?.cashArr||[], origQtyArr=d.st?.qtyArr||[], origAvgArr=d.st?.avgArr||[];
+      MULTI.slots[i]={ name:d.name, rows, dateToIdx, sortedDates, initCash:d.st?.initCash||100000,
+        monthlyAdd:d.st?.monthlyAdd||0, extraLog:[], excludedOid:new Set(),
+        origLog, origEq, origInjCum, origCashArr, origQtyArr, origAvgArr,
+        log:origLog, eq:origEq, injCum:origInjCum, cashArr:origCashArr, qtyArr:origQtyArr, avgArr:origAvgArr };
     }catch(e){ MULTI.slots[i]=null; toast('슬롯 '+(i+1)+' 로드 실패: '+e.message); }
   }
   buildGlobalTimeline();
   buildMultiCharts(); renderMulti();
   toast('불러왔어');
+}
+function recomputeSlot(sl){
+  const hasExtra=sl.extraLog&&sl.extraLog.length, hasExcluded=sl.excludedOid&&sl.excludedOid.size;
+  if(!hasExtra && !hasExcluded){
+    sl.log=sl.origLog; sl.eq=sl.origEq; sl.cashArr=sl.origCashArr;
+    sl.qtyArr=sl.origQtyArr; sl.avgArr=sl.origAvgArr; sl.injCum=sl.origInjCum;
+    return;
+  }
+  const rows=sl.rows, monthlyAdd=sl.monthlyAdd||0;
+  let insertDate=null;
+  (sl.extraLog||[]).forEach(t=>{ if(insertDate===null||t.d<insertDate) insertDate=t.d; });
+  sl.origLog.forEach(t=>{ if(sl.excludedOid.has(t._oid) && (insertDate===null||t.d<insertDate)) insertDate=t.d; });
+  if(insertDate===null) insertDate=sl.rows[0].t;
+  let startIdx=sl.dateToIdx.get(insertDate);
+  if(startIdx==null) startIdx=Math.max(0, multiFloorIdx(sl.sortedDates, insertDate));
+
+  let cash, qty, avg, injected, monthlyLastMonth=null;
+  if(startIdx<=0){ cash=sl.initCash; qty=0; avg=0; injected=0; startIdx=0; }
+  else{
+    cash=sl.origCashArr[startIdx-1]; qty=sl.origQtyArr[startIdx-1]; avg=sl.origAvgArr[startIdx-1];
+    injected=sl.origInjCum[startIdx-1]||0;
+    for(let j=startIdx-1;j>=0;j--){
+      const prevInj=j>0?(sl.origInjCum[j-1]||0):0;
+      if((sl.origInjCum[j]||0)>prevInj){ monthlyLastMonth=rows[j].t.slice(0,7); break; }
+    }
+  }
+  const startDate=rows[startIdx].t;
+  const merged=sl.origLog.filter(t=>t.d>=startDate && !sl.excludedOid.has(t._oid))
+    .map(t=>({d:t.d,side:t.side,pctOfEq:t.pctOfEq,p:t.p,_oid:t._oid}))
+    .concat((sl.extraLog||[]).map(t=>({d:t.d,side:t.side,pctOfEq:t.pctOfEq,p:t.p,virtual:true})));
+  merged.sort((a,b)=>{ if(a.d!==b.d) return a.d<b.d?-1:1; return (a.virtual?0:1)-(b.virtual?0:1); });
+  const logByDate={};
+  merged.forEach(t=>{ (logByDate[t.d]=logByDate[t.d]||[]).push(t); });
+
+  const eq=sl.origEq.slice(0,startIdx), cashArr=sl.origCashArr.slice(0,startIdx),
+    qtyArr=sl.origQtyArr.slice(0,startIdx), avgArr=sl.origAvgArr.slice(0,startIdx),
+    injCum=sl.origInjCum.slice(0,startIdx);
+  const resultLog=sl.origLog.filter(t=>t.d<startDate && !sl.excludedOid.has(t._oid)).slice();
+
+  for(let idx=startIdx; idx<rows.length; idx++){
+    const r=rows[idx], date=r.t, mon=date.slice(0,7), dom=r.d?r.d.getDate():+date.slice(8,10);
+    if(monthlyAdd>0 && dom>=10 && mon!==monthlyLastMonth){ monthlyLastMonth=mon; cash+=monthlyAdd; injected+=monthlyAdd; }
+    if(logByDate[date]){
+      for(const t of logByDate[date]){
+        if(t.side==='buy'){
+          const amt=cash*(t.pctOfEq/100), tq=t.p>0?amt/t.p:0;
+          const newQty=qty+tq;
+          avg=newQty>0?(avg*qty+t.p*tq)/newQty:0;
+          qty=newQty; cash-=amt;
+          resultLog.push({d:date,i:idx,side:'buy',type:'market',p:t.p,q:+tq.toFixed(4),pnl:null,pctOfEq:t.pctOfEq,note:t.virtual?'(가상)':'',virtual:!!t.virtual,_oid:t._oid});
+        }else{
+          const tq=qty*(t.pctOfEq/100), pnl=(t.p-avg)*tq;
+          cash+=t.p*tq; qty-=tq;
+          if(qty<=1e-9){ qty=0; avg=0; }
+          resultLog.push({d:date,i:idx,side:'sell',type:'market',p:t.p,q:+tq.toFixed(4),pnl:Math.round(pnl),pctOfEq:t.pctOfEq,note:t.virtual?'(가상)':'',virtual:!!t.virtual,_oid:t._oid});
+        }
+      }
+    }
+    eq.push(Math.round(cash+qty*r.c)); cashArr.push(Math.round(cash));
+    qtyArr.push(+qty.toFixed(4)); avgArr.push(+avg.toFixed(4)); injCum.push(injected);
+  }
+  sl.log=resultLog; sl.eq=eq; sl.cashArr=cashArr; sl.qtyArr=qtyArr; sl.avgArr=avgArr; sl.injCum=injCum;
 }
 function multiFloorIdx(sortedDates, dateStr){
   let lo=0, hi=sortedDates.length-1, ans=-1;
@@ -1164,8 +1264,8 @@ function drawMultiChart(cv, sl, gWindow, avgPrice){
     const k=winIdx.get(t.d); if(k==null) return;
     const bar=bars[k]; if(!bar) return;
     const cx=k*cw+cw/2, cy=Y(t.p);
-    const rgb=t.side==='buy'?'229,72,77':'59,130,246';
-    const label=(t.pctOfEq||0)+'%', fw=13+label.length*6, fh=12, pole=6;
+    const rgb=t.virtual?'168,85,247':(t.side==='buy'?'229,72,77':'59,130,246');
+    const label=(t.pctOfEq||0)+'%'+(t.virtual?'*':''), fw=13+label.length*6, fh=12, pole=6;
     x.strokeStyle='rgba('+rgb+',.6)'; x.lineWidth=1;
     x.beginPath(); x.moveTo(cx,cy); x.lineTo(cx,cy-pole); x.stroke();
     x.fillStyle='rgba('+rgb+',.55)'; x.fillRect(cx, cy-pole-fh, fw, fh);
@@ -1254,6 +1354,74 @@ function attachMultiDrag(){
 }
 window.addEventListener('mousemove',multiPanMove);
 window.addEventListener('mouseup',multiPanUp);
+
+let mTradeIdx=null, mTradeSide='buy';
+function openTradeSheet(idx){
+  const sl=MULTI.slots[idx]; if(!sl) return;
+  mTradeIdx=idx;
+  const ve=MULTI.viewEnd===null?MULTI.gIdx:MULTI.viewEnd;
+  const curDate=MULTI.gDates[ve]||MULTI.gDates[MULTI.gIdx];
+  $('#mTradeDate').value=curDate||'';
+  $('#mTradePct').value='';
+  const nearIdx=multiFloorIdx(sl.sortedDates, curDate||'');
+  const price=nearIdx>=0 && sl.rows[nearIdx] ? sl.rows[nearIdx].c : '';
+  $('#mTradePrice').value=price;
+  mTradeSide='buy';
+  $('#mTradeBuy').classList.add('on'); $('#mTradeSell').classList.remove('on');
+  $('#mTradePctLabel').textContent='현금 비중%';
+  $('#mTradeTitle').textContent=sl.name+' 에 가상 매매 끼워넣기';
+  $('#mTradeInfo').textContent='이 날짜 이후의 원래 매매들도 이 가상 매매가 반영된 현금·수량 기준으로 다시 계산돼.';
+  $('#mTradeSheet').style.display='block';
+}
+$('#mTradeClose').onclick=()=>{ $('#mTradeSheet').style.display='none'; };
+$('#mTradeBuy').onclick=()=>{ mTradeSide='buy'; $('#mTradeBuy').classList.add('on'); $('#mTradeSell').classList.remove('on'); $('#mTradePctLabel').textContent='현금 비중%'; };
+$('#mTradeSell').onclick=()=>{ mTradeSide='sell'; $('#mTradeSell').classList.add('on'); $('#mTradeBuy').classList.remove('on'); $('#mTradePctLabel').textContent='보유수량 비중%'; };
+$('#mTradeConfirm').onclick=()=>{
+  if(mTradeIdx==null) return;
+  const sl=MULTI.slots[mTradeIdx]; if(!sl) return;
+  const date=$('#mTradeDate').value.trim();
+  const pct=+$('#mTradePct').value;
+  const price=+$('#mTradePrice').value;
+  if(!date || !sl.dateToIdx.has(date)) return toast('해당 날짜의 캔들이 없어');
+  if(!(pct>0&&pct<=100)) return toast('비중%을 0~100 사이로 입력해');
+  if(!(price>0)) return toast('가격을 입력해');
+  sl.extraLog=sl.extraLog||[];
+  sl.extraLog.push({d:date, side:mTradeSide, pctOfEq:pct, p:price});
+  recomputeSlot(sl);
+  buildMultiCharts(); renderMulti();
+  $('#mTradeSheet').style.display='none';
+  toast('가상 매매 끼워넣음 — 이후 매매·평단·평가액 다시 계산됨');
+};
+$('#mTradeClearAll').onclick=()=>{
+  if(mTradeIdx==null) return;
+  const sl=MULTI.slots[mTradeIdx]; if(!sl) return;
+  sl.extraLog=[]; sl.excludedOid=new Set();
+  recomputeSlot(sl);
+  buildMultiCharts(); renderMulti();
+  $('#mTradeSheet').style.display='none';
+  toast('가상 매매·뺀 매매 모두 원상복구함');
+};
+function renderLogSheet(){
+  const sl=MULTI.slots[mTradeIdx]; if(!sl) return;
+  $('#mLogTitle').textContent=sl.name+' — 원래 매매 기록';
+  const body=$('#mLogBody');
+  body.innerHTML=sl.origLog.map(t=>{
+    const excluded=sl.excludedOid.has(t._oid);
+    return '<tr'+(excluded?' style="opacity:.4"':'')+'>'+
+      '<td>'+t.d+'</td><td class="'+(t.side==='buy'?'up':'dn')+'">'+(t.side==='buy'?'매수':'매도')+'</td>'+
+      '<td>'+fmt(t.p)+'</td><td>'+(t.pctOfEq||0)+'%</td>'+
+      '<td><button class="ghost mLogToggle" data-oid="'+t._oid+'" style="padding:3px 8px;font-size:11px">'+(excluded?'복원':'빼기')+'</button></td></tr>';
+  }).join('');
+  document.querySelectorAll('.mLogToggle').forEach(b=>b.onclick=()=>{
+    const oid=+b.dataset.oid;
+    if(sl.excludedOid.has(oid)) sl.excludedOid.delete(oid); else sl.excludedOid.add(oid);
+    recomputeSlot(sl);
+    buildMultiCharts(); renderMulti();
+    renderLogSheet();
+  });
+}
+$('#mTradeOpenLog').onclick=()=>{ if(mTradeIdx==null) return; renderLogSheet(); $('#mLogSheet').style.display='block'; };
+$('#mLogClose').onclick=()=>{ $('#mLogSheet').style.display='none'; };
 
 restore().then(ok=>{ if(!ok) render(); renderSlotList(); });
 })();
