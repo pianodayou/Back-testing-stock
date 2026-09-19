@@ -248,7 +248,10 @@
     <button class="ghost" id="mTradeSell" data-side="sell">매도</button>
   </div>
   <div class="row"><label style="min-width:56px" id="mTradePctLabel">현금 비중%</label><input id="mTradePct" type="number" placeholder="예: 20" step="any"></div>
-  <div class="row"><label style="min-width:56px">가격</label><input id="mTradePrice" type="number" placeholder="시가/종가 등" step="any"></div>
+  <div class="row"><label style="min-width:56px">가격</label><input id="mTradePrice" type="number" placeholder="시가/종가 등" step="any">
+    <button class="ghost" id="mTradePxOpen" style="flex:0 0 44px;padding:6px 2px;font-size:11px">시가</button>
+    <button class="ghost" id="mTradePxClose" style="flex:0 0 44px;padding:6px 2px;font-size:11px">종가</button>
+  </div>
   <p class="note" id="mTradeInfo" style="margin:6px 0"></p>
   <div class="row" style="margin-top:8px">
     <button class="ghost" id="mTradeConfirm" style="flex:1;background:#2F4A6B">끼워넣기</button>
@@ -282,6 +285,24 @@
     <button class="ghost" id="bFlip" style="flex:1">날짜 순서 뒤집기</button>
     <button class="ghost" id="bSample" style="flex:1">샘플 넣기</button>
   </div>
+  <hr>
+  <div class="row" style="margin-bottom:2px"><b style="font-size:12.5px">야후 파이낸스에서 바로 불러오기</b></div>
+  <div class="row">
+    <input id="yfTicker" placeholder="티커 (예: SOXL, AAPL, ^GSPC)" style="flex:1">
+    <select id="yfInterval" style="flex:0 0 112px">
+      <option value="1d" selected>일봉</option>
+      <option value="1wk">주봉</option>
+      <option value="60m">1시간봉</option>
+      <option value="4h">4시간봉(합성)</option>
+    </select>
+  </div>
+  <div class="row">
+    <label style="min-width:36px">시작</label><input id="yfStart" type="date">
+    <label style="min-width:36px">종료</label><input id="yfEnd" type="date">
+  </div>
+  <button class="ghost" id="yfFetch" style="width:100%;margin-top:6px">야후 파이낸스에서 불러오기</button>
+  <p class="note" id="yfInfo" style="margin-top:-2px"></p>
+  <p class="note">야후 파이낸스는 브라우저에서 직접 CORS를 안 열어줘서 공개 리더 프록시(r.jina.ai)를 한 번 거쳐서 받아와 — 이 프록시가 느리거나 잠깐 막히면 몇 초 뒤 다시 시도해봐(둘 다 무료 서비스라 100% 항상 된다는 보장은 없어, 안 되면 기존처럼 CSV로 붙여넣는 방법도 계속 써). 1시간봉·4시간봉은 야후 정책상 최근 약 2년치만 나오고, 4시간봉은 각 거래일 안에서 1시간봉 4개씩 묶어 만든 합성 봉이야(정확히 시계 기준 4시간 단위는 아님). 불러온 뒤 아래 "이 설정으로 새 세션 시작"으로 초기자본 등을 맞추고 재생하면 돼.</p>
   <hr>
   <div class="row"><label>시작 지점</label><input id="dStart" type="range" min="0" max="99" value="0"></div>
   <div class="row"><label>보이는 봉</label><input id="dView" type="range" min="40" max="400" value="140"></div>
@@ -345,11 +366,18 @@
 <script>
 (function(){
 "use strict";
+if(!window.storage){
+  window.storage = {
+    get: async (key)=>{ try{ const v=localStorage.getItem(key); return v==null?null:{value:v}; }catch(e){ return null; } },
+    set: async (key,value)=>{ try{ localStorage.setItem(key,value); }catch(e){} },
+    delete: async (key)=>{ try{ localStorage.removeItem(key); }catch(e){} }
+  };
+}
 const $ = s => document.querySelector(s);
 const S = {
   name:'', rows:[], i:0, start:0, view:140, viewEnd:null, tapMark:null, yZoom:1, yOffset:0,
   initCash:10000000, cash:0, qty:0, avg:0, realized:0, fees:0,
-  orders:[], log:[], eq:[], bh:[], oid:1,
+  orders:[], log:[], eq:[], bh:[], cashArr:[], qtyArr:[], avgArr:[], injCum:[], oid:1,
   feeBps:5, slipBps:5, fillMode:'nextOpen',
   playing:false, timer:null, otype:'market',
   monthlyAdd:0, monthlyLastMonth:'', injected:0, bhShares:0,
@@ -396,7 +424,9 @@ function dateOf(s){
 }
 function label(r){
   if(r.d) { const p=n=>String(n).padStart(2,'0');
-    return r.d.getFullYear()+'-'+p(r.d.getMonth()+1)+'-'+p(r.d.getDate()); }
+    let s=r.d.getFullYear()+'-'+p(r.d.getMonth()+1)+'-'+p(r.d.getDate());
+    if(r.d.getHours()||r.d.getMinutes()) s+=' '+p(r.d.getHours())+':'+p(r.d.getMinutes());
+    return s; }
   return r.t||'';
 }
 function parseCSV(text, minRows){
@@ -456,6 +486,86 @@ function loadRows(rows,name){
   $('#dInfo').textContent = rows.length+'개 봉 · '+label(rows[0])+' ~ '+label(rows[rows.length-1]);
   save(true);
 }
+
+/* ---------- Yahoo Finance live fetch ---------- */
+function ymd(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function aggregate4hRows(rows){
+  const out=[]; let b=null, bDay=null;
+  rows.forEach(r=>{
+    const day=ymd(r.d);
+    if(!b || day!==bDay || b.n>=4){
+      if(b) out.push({d:b.d,o:b.o,h:b.h,l:b.l,c:b.c,v:b.v});
+      b={d:r.d,o:r.o,h:r.h,l:r.l,c:r.c,v:r.v,n:1}; bDay=day;
+    }else{
+      b.h=Math.max(b.h,r.h); b.l=Math.min(b.l,r.l); b.c=r.c; b.v+=r.v; b.n++;
+    }
+  });
+  if(b) out.push({d:b.d,o:b.o,h:b.h,l:b.l,c:b.c,v:b.v});
+  return out;
+}
+async function fetchYahooRows(ticker, startStr, endStr, interval){
+  let p1=Math.floor(new Date(startStr+'T00:00:00Z').getTime()/1000);
+  const p2=Math.floor(new Date(endStr+'T23:59:59Z').getTime()/1000);
+  if(!(p1<p2)) throw new Error('기간이 올바르지 않아');
+  const realInterval = interval==='4h' ? '60m' : interval;
+  if(realInterval==='60m'){
+    const minP1=Math.floor(Date.now()/1000)-729*86400;
+    if(p1<minP1) p1=minP1;
+  }
+  const url='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(ticker)+
+    '?period1='+p1+'&period2='+p2+'&interval='+realInterval+'&includePrePost=false';
+  const proxied='https://r.jina.ai/'+url;
+  const res=await fetch(proxied);
+  if(!res.ok) throw new Error('요청 실패 (HTTP '+res.status+')');
+  const raw=await res.text();
+  const cut=raw.indexOf('Markdown Content:');
+  const jsonText=(cut>=0?raw.slice(cut+'Markdown Content:'.length):raw).trim();
+  let j; try{ j=JSON.parse(jsonText); }catch(e){ throw new Error('응답을 해석 못함(프록시 오류일 수 있어)'); }
+  if(j.chart && j.chart.error) throw new Error(j.chart.error.description||'야후 파이낸스 에러');
+  const result=j.chart && j.chart.result && j.chart.result[0];
+  if(!result || !result.timestamp) throw new Error('해당 티커/기간 데이터가 없어');
+  const ts=result.timestamp, q=result.indicators.quote[0];
+  let rows=[];
+  for(let i=0;i<ts.length;i++){
+    const o=q.open[i], h=q.high[i], l=q.low[i], c=q.close[i], v=q.volume[i];
+    if(o==null||h==null||l==null||c==null) continue;
+    rows.push({ d:new Date(ts[i]*1000), o:o, h:h, l:l, c:c, v:v||0 });
+  }
+  if(!rows.length) throw new Error('유효한 봉이 없어');
+  if(interval==='4h') rows=aggregate4hRows(rows);
+  const dateOnly = (interval==='1d'||interval==='1wk');
+  rows.forEach(r=>{
+    if(dateOnly) r.d=new Date(r.d.getFullYear(), r.d.getMonth(), r.d.getDate());
+    r.t = dateOnly ? ymd(r.d) : label(r);
+  });
+  return rows;
+}
+(function initYfDates(){
+  const end=new Date(), start=new Date(); start.setFullYear(start.getFullYear()-3);
+  if($('#yfEnd')) $('#yfEnd').value=ymd(end);
+  if($('#yfStart')) $('#yfStart').value=ymd(start);
+})();
+if($('#yfFetch')) $('#yfFetch').onclick=async ()=>{
+  const ticker=$('#yfTicker').value.trim();
+  if(!ticker) return toast('티커를 입력해');
+  const startStr=$('#yfStart').value, endStr=$('#yfEnd').value;
+  if(!startStr||!endStr) return toast('기간을 입력해');
+  const interval=$('#yfInterval').value;
+  const btn=$('#yfFetch'); btn.disabled=true; $('#yfInfo').textContent='불러오는 중...';
+  try{
+    const rows=await fetchYahooRows(ticker, startStr, endStr, interval);
+    const ivName={'1d':'일봉','1wk':'주봉','60m':'1시간봉','4h':'4시간봉'}[interval]||interval;
+    loadRows(rows, ticker.toUpperCase()+' '+ivName);
+    $('#dName').value=S.name;
+    $('#yfInfo').textContent='불러옴: '+rows.length+'봉 ('+label(rows[0])+' ~ '+label(rows[rows.length-1])+')';
+    toast('야후 파이낸스에서 불러왔어');
+  }catch(e){
+    $('#yfInfo').textContent='실패: '+e.message;
+    toast('불러오기 실패: '+e.message);
+  }finally{
+    btn.disabled=false;
+  }
+};
 function resetSession(){
   S.initCash=+$('#dCash').value||10000000;
   S.feeBps=+$('#dFee').value||0; S.slipBps=+$('#dSlip').value||0;
@@ -463,7 +573,7 @@ function resetSession(){
   const p=+$('#dStart').value/100;
   S.start=Math.max(0,Math.min(S.rows.length-5,Math.floor(S.rows.length*p)));
   S.i=S.start; S.cash=S.initCash; S.qty=0; S.avg=0; S.realized=0; S.fees=0;
-  S.orders=[]; S.log=[]; S.eq=[]; S.bh=[]; S.viewEnd=null; S.tapMark=null; S.yZoom=1; S.yOffset=0;
+  S.orders=[]; S.log=[]; S.eq=[]; S.bh=[]; S.cashArr=[]; S.qtyArr=[]; S.avgArr=[]; S.injCum=[]; S.viewEnd=null; S.tapMark=null; S.yZoom=1; S.yOffset=0;
   S.dca.invested=0; S.dca.qty=0; S.dca.avg=0; S.dca.firstPx=0; S.dca.lastDay='';
   S.monthlyAdd=+$('#dMonthlyAdd').value||0; S.monthlyLastMonth=''; S.injected=0;
   S.bhShares=S.initCash/S.rows[S.start].c;
@@ -526,7 +636,7 @@ function dcaBuy(amt){
 function dcaTick(){
   if(!S.dca.on) return;
   const b=bar(); if(!b) return;
-  const day=label(b); if(day===S.dca.lastDay) return;
+  const day=label(b).slice(0,10); if(day===S.dca.lastDay) return;
   S.dca.lastDay=day;
   dcaBuy(+S.dca.daily||0);
 }
@@ -550,10 +660,13 @@ function step(n){
   monthlyTick();
   dcaTick();
   S.eq.push(equity());
+  S.cashArr.push(Math.round(S.cash)); S.qtyArr.push(+S.qty.toFixed(4));
+  S.avgArr.push(+S.avg.toFixed(4)); S.injCum.push(S.injected||0);
   S.bh.push(S.bhShares*bar().c);
   render(); save();
 }
-function back(){ if(S.i>S.start){ S.i--; S.viewEnd=null; S.eq.pop(); S.bh.pop(); render(); save(); } }
+function back(){ if(S.i>S.start){ S.i--; S.viewEnd=null; S.eq.pop(); S.bh.pop();
+  S.cashArr.pop(); S.qtyArr.pop(); S.avgArr.pop(); S.injCum.pop(); render(); save(); } }
 function play(){ S.playing=true; $('#bPlay').textContent='❚❚ 정지';
   S.timer=setInterval(()=>step(1), +$('#spd').value); }
 function stop(){ S.playing=false; clearInterval(S.timer); $('#bPlay').textContent='▶ 재생'; }
@@ -743,11 +856,30 @@ function render(){
 
 /* ---------- storage ---------- */
 let saveT=null;
+function buildMultiAlignedArrays(){
+  // S.eq/cashArr/qtyArr/avgArr/injCum are relative: index 0 corresponds to S.rows[S.start+1].
+  // Multi-compare needs them aligned 1:1 with the full S.rows array (index 0 = rows[0]),
+  // padded flat before start and holding the last known value after the last played bar.
+  const n=S.rows.length, mEq=new Array(n), mCash=new Array(n), mQty=new Array(n), mAvg=new Array(n), mInj=new Array(n);
+  const lastJ=S.eq.length-1;
+  for(let k=0;k<n;k++){
+    const j=k-S.start-1;
+    if(j<0){ mEq[k]=S.initCash; mCash[k]=S.initCash; mQty[k]=0; mAvg[k]=0; mInj[k]=0; }
+    else{
+      const jj=Math.min(j,lastJ);
+      if(jj<0){ mEq[k]=S.initCash; mCash[k]=S.initCash; mQty[k]=0; mAvg[k]=0; mInj[k]=0; }
+      else{ mEq[k]=S.eq[jj]; mCash[k]=S.cashArr[jj]; mQty[k]=S.qtyArr[jj]; mAvg[k]=S.avgArr[jj]; mInj[k]=S.injCum[jj]; }
+    }
+  }
+  return { mEq, mCash, mQty, mAvg, mInj };
+}
 function buildPayload(){
   const csv=S.rows.map(r=>[label(r),r.o,r.h,r.l,r.c,r.v].join(',')).join('\n');
+  const m=buildMultiAlignedArrays();
   return { name:S.name, csv:csv,
     st:{i:S.i,start:S.start,cash:S.cash,qty:S.qty,avg:S.avg,realized:S.realized,fees:S.fees,
         initCash:S.initCash,orders:S.orders,log:S.log,eq:S.eq,bh:S.bh,
+        mEq:m.mEq,mCash:m.mCash,mQty:m.mQty,mAvg:m.mAvg,mInj:m.mInj,
         feeBps:S.feeBps,slipBps:S.slipBps,fillMode:S.fillMode,view:S.view,dca:S.dca,
         monthlyAdd:S.monthlyAdd,monthlyLastMonth:S.monthlyLastMonth,injected:S.injected,bhShares:S.bhShares} };
 }
@@ -1086,7 +1218,7 @@ function buildMultiCharts(){
   document.querySelectorAll('.mTradeBtn').forEach(b=>b.onclick=()=>openTradeSheet(+b.dataset.idx));
 }
 function addMonths(dateStr, months){
-  const d=new Date(dateStr+'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth()+months);
+  const d=new Date(dateStr.slice(0,10)+'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth()+months);
   return d.toISOString().slice(0,10);
 }
 function buildGlobalTimeline(){
@@ -1132,8 +1264,8 @@ async function loadMultiSlots(){
       rows.forEach((r,ix)=>{ if(r.t) dateToIdx.set(r.t, ix); });
       const sortedDates=rows.map(r=>r.t).filter(Boolean);
       const origLog=(d.st?.log||[]).map((t,oi)=>({...t, _oid:oi})),
-        origEq=d.st?.eq||[], origInjCum=d.st?.injCum||[],
-        origCashArr=d.st?.cashArr||[], origQtyArr=d.st?.qtyArr||[], origAvgArr=d.st?.avgArr||[];
+        origEq=d.st?.mEq||d.st?.eq||[], origInjCum=d.st?.mInj||d.st?.injCum||[],
+        origCashArr=d.st?.mCash||d.st?.cashArr||[], origQtyArr=d.st?.mQty||d.st?.qtyArr||[], origAvgArr=d.st?.mAvg||d.st?.avgArr||[];
       MULTI.slots[i]={ name:d.name, rows, dateToIdx, sortedDates, initCash:d.st?.initCash||100000,
         monthlyAdd:d.st?.monthlyAdd||0, extraLog:[], excludedOid:new Set(),
         origLog, origEq, origInjCum, origCashArr, origQtyArr, origAvgArr,
@@ -1376,6 +1508,16 @@ function openTradeSheet(idx){
 $('#mTradeClose').onclick=()=>{ $('#mTradeSheet').style.display='none'; };
 $('#mTradeBuy').onclick=()=>{ mTradeSide='buy'; $('#mTradeBuy').classList.add('on'); $('#mTradeSell').classList.remove('on'); $('#mTradePctLabel').textContent='현금 비중%'; };
 $('#mTradeSell').onclick=()=>{ mTradeSide='sell'; $('#mTradeSell').classList.add('on'); $('#mTradeBuy').classList.remove('on'); $('#mTradePctLabel').textContent='보유수량 비중%'; };
+function mTradeFillPrice(field){
+  if(mTradeIdx==null) return;
+  const sl=MULTI.slots[mTradeIdx]; if(!sl) return;
+  const date=$('#mTradeDate').value.trim();
+  const idx=multiFloorIdx(sl.sortedDates, date);
+  if(idx<0 || !sl.rows[idx]) return toast('해당 날짜의 캔들이 없어');
+  $('#mTradePrice').value=sl.rows[idx][field];
+}
+$('#mTradePxOpen').onclick=()=>mTradeFillPrice('o');
+$('#mTradePxClose').onclick=()=>mTradeFillPrice('c');
 $('#mTradeConfirm').onclick=()=>{
   if(mTradeIdx==null) return;
   const sl=MULTI.slots[mTradeIdx]; if(!sl) return;
