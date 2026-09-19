@@ -232,6 +232,7 @@
     <button class="ghost" id="mZOut" style="flex:0 0 52px">축소－</button>
     <button class="ghost" id="mLive" style="flex:1;display:none">현재로 ↦</button>
   </div>
+  <div class="row" style="justify-content:center;margin:4px 0"><b id="mCurDate" class="num" style="font-size:13px">—</b></div>
   <div id="multiCharts"></div>
   <p class="note">이미 끝까지 재생됐던 슬롯은 그 지점부터는 캔들만 계속 움직이고 평가금액은 마지막 기록값에서 멈춰 — 그 이후는 실제로 뭘 샀는지 모르니까 숫자를 지어내지 않는 거야. 각 슬롯의 "+ 가상 매매" 버튼으로 현재 재생 시점에 매수·매도를 끼워넣어볼 수 있어 — 매수는 그 시점 현금의 %, 매도는 그 시점 보유수량의 %로 계산되고, 그 뒤에 원래 있던 매매들도 전부 이 가상 매매가 반영된 현금·수량 기준으로 다시 계산돼.</p>
 </section>
@@ -257,7 +258,7 @@
     <button class="ghost" id="mTradeConfirm" style="flex:1;background:#2F4A6B">끼워넣기</button>
     <button class="ghost" id="mTradeClearAll" style="flex:1">이 슬롯 가상매매 전부 취소</button>
   </div>
-  <button class="ghost" id="mTradeOpenLog" style="width:100%;margin-top:6px">원래 매매 기록에서 빼기...</button>
+  <button class="ghost" id="mTradeOpenLog" style="width:100%;margin-top:6px">전체 매매 기록 보기 · 빼기...</button>
 </div>
 
 <div id="mLogSheet" style="display:none;position:fixed;left:0;right:0;bottom:0;top:15%;background:var(--panel);
@@ -1267,7 +1268,7 @@ async function loadMultiSlots(){
         origEq=d.st?.mEq||d.st?.eq||[], origInjCum=d.st?.mInj||d.st?.injCum||[],
         origCashArr=d.st?.mCash||d.st?.cashArr||[], origQtyArr=d.st?.mQty||d.st?.qtyArr||[], origAvgArr=d.st?.mAvg||d.st?.avgArr||[];
       MULTI.slots[i]={ name:d.name, rows, dateToIdx, sortedDates, initCash:d.st?.initCash||100000,
-        monthlyAdd:d.st?.monthlyAdd||0, extraLog:[], excludedOid:new Set(),
+        monthlyAdd:d.st?.monthlyAdd||0, extraLog:[], excludedOid:new Set(), vidSeq:1,
         origLog, origEq, origInjCum, origCashArr, origQtyArr, origAvgArr,
         log:origLog, eq:origEq, injCum:origInjCum, cashArr:origCashArr, qtyArr:origQtyArr, avgArr:origAvgArr };
     }catch(e){ MULTI.slots[i]=null; toast('슬롯 '+(i+1)+' 로드 실패: '+e.message); }
@@ -1304,7 +1305,7 @@ function recomputeSlot(sl){
   const startDate=rows[startIdx].t;
   const merged=sl.origLog.filter(t=>t.d>=startDate && !sl.excludedOid.has(t._oid))
     .map(t=>({d:t.d,side:t.side,pctOfEq:t.pctOfEq,p:t.p,_oid:t._oid}))
-    .concat((sl.extraLog||[]).map(t=>({d:t.d,side:t.side,pctOfEq:t.pctOfEq,p:t.p,virtual:true})));
+    .concat((sl.extraLog||[]).map(t=>({d:t.d,side:t.side,pctOfEq:t.pctOfEq,p:t.p,virtual:true,_vid:t._vid})));
   merged.sort((a,b)=>{ if(a.d!==b.d) return a.d<b.d?-1:1; return (a.virtual?0:1)-(b.virtual?0:1); });
   const logByDate={};
   merged.forEach(t=>{ (logByDate[t.d]=logByDate[t.d]||[]).push(t); });
@@ -1398,11 +1399,12 @@ function drawMultiChart(cv, sl, gWindow, avgPrice){
     const cx=k*cw+cw/2, cy=Y(t.p);
     const rgb=t.virtual?'168,85,247':(t.side==='buy'?'229,72,77':'59,130,246');
     const label=(t.pctOfEq||0)+'%'+(t.virtual?'*':''), fw=13+label.length*6, fh=12, pole=6;
+    let bx=cx; if(bx+fw>W) bx=W-fw; if(bx<0) bx=0;
     x.strokeStyle='rgba('+rgb+',.6)'; x.lineWidth=1;
     x.beginPath(); x.moveTo(cx,cy); x.lineTo(cx,cy-pole); x.stroke();
-    x.fillStyle='rgba('+rgb+',.55)'; x.fillRect(cx, cy-pole-fh, fw, fh);
+    x.fillStyle='rgba('+rgb+',.55)'; x.fillRect(bx, cy-pole-fh, fw, fh);
     x.fillStyle='#fff'; x.font='9px sans-serif'; x.textAlign='left'; x.textBaseline='middle';
-    x.fillText(label, cx+3, cy-pole-fh/2+1);
+    x.fillText(label, bx+3, cy-pole-fh/2+1);
     x.beginPath(); x.arc(cx,cy,3,0,7); x.fill();
   });
 }
@@ -1412,6 +1414,7 @@ function renderMulti(){
   const n=Math.min(MULTI.view, ve+1), s=ve-n+1;
   const gWindow=MULTI.gDates.slice(s, ve+1);
   const curDate=MULTI.gDates[ve];
+  const curDateEl=$('#mCurDate'); if(curDateEl) curDateEl.textContent=curDate||'—';
   const liveBtn=$('#mLive'); if(liveBtn) liveBtn.style.display=(ve<MULTI.gIdx)?'inline-block':'none';
   MULTI.slots.forEach((sl,i)=>{
     if(!sl) return;
@@ -1528,7 +1531,8 @@ $('#mTradeConfirm').onclick=()=>{
   if(!(pct>0&&pct<=100)) return toast('비중%을 0~100 사이로 입력해');
   if(!(price>0)) return toast('가격을 입력해');
   sl.extraLog=sl.extraLog||[];
-  sl.extraLog.push({d:date, side:mTradeSide, pctOfEq:pct, p:price});
+  sl.vidSeq=sl.vidSeq||1;
+  sl.extraLog.push({d:date, side:mTradeSide, pctOfEq:pct, p:price, _vid:sl.vidSeq++});
   recomputeSlot(sl);
   buildMultiCharts(); renderMulti();
   $('#mTradeSheet').style.display='none';
@@ -1545,9 +1549,19 @@ $('#mTradeClearAll').onclick=()=>{
 };
 function renderLogSheet(){
   const sl=MULTI.slots[mTradeIdx]; if(!sl) return;
-  $('#mLogTitle').textContent=sl.name+' — 원래 매매 기록';
+  $('#mLogTitle').textContent=sl.name+' — 전체 매매 기록';
   const body=$('#mLogBody');
-  body.innerHTML=sl.origLog.map(t=>{
+  const merged=sl.origLog.map(t=>({...t, _kind:'orig'}))
+    .concat((sl.extraLog||[]).map(t=>({...t, _kind:'virtual'})))
+    .sort((a,b)=>a.d<b.d?-1:(a.d>b.d?1:0));
+  body.innerHTML=merged.map(t=>{
+    if(t._kind==='virtual'){
+      return '<tr>'+
+        '<td>'+t.d+'</td><td class="'+(t.side==='buy'?'up':'dn')+'">'+(t.side==='buy'?'매수':'매도')+
+        ' <span style="color:#A855F7;font-size:10px">추가됨</span></td>'+
+        '<td>'+fmt(t.p)+'</td><td>'+(t.pctOfEq||0)+'%</td>'+
+        '<td><button class="ghost mLogDelVirtual" data-vid="'+t._vid+'" style="padding:3px 8px;font-size:11px">삭제</button></td></tr>';
+    }
     const excluded=sl.excludedOid.has(t._oid);
     return '<tr'+(excluded?' style="opacity:.4"':'')+'>'+
       '<td>'+t.d+'</td><td class="'+(t.side==='buy'?'up':'dn')+'">'+(t.side==='buy'?'매수':'매도')+'</td>'+
@@ -1557,6 +1571,13 @@ function renderLogSheet(){
   document.querySelectorAll('.mLogToggle').forEach(b=>b.onclick=()=>{
     const oid=+b.dataset.oid;
     if(sl.excludedOid.has(oid)) sl.excludedOid.delete(oid); else sl.excludedOid.add(oid);
+    recomputeSlot(sl);
+    buildMultiCharts(); renderMulti();
+    renderLogSheet();
+  });
+  document.querySelectorAll('.mLogDelVirtual').forEach(b=>b.onclick=()=>{
+    const vid=+b.dataset.vid;
+    sl.extraLog=(sl.extraLog||[]).filter(t=>t._vid!==vid);
     recomputeSlot(sl);
     buildMultiCharts(); renderMulti();
     renderLogSheet();
