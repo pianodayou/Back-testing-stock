@@ -376,6 +376,39 @@ if(!window.storage){
   };
 }
 const $ = s => document.querySelector(s);
+const EMBEDDED_DATA=`2026-07-14,매도,85,187.7,8000000,1222864930
+2026-04-14,매수,21,83.3,2000000,
+2026-02-20,매도,29,63.7,3000000,127015171
+2025-11-20,매수,0,38.8,17428.2,
+2025-10-28,매수,4,46.5,358411.8,
+2025-10-03,매수,4,39.5,421526.7,
+2025-09-19,매수,9,33.6,978035.7,
+2025-08-08,매수,24,25.2,2611431.6,
+2025-06-13,매수,16,20.3,1958329,
+2025-04-15,매수,15,10.6,3000000,
+2025-04-08,매수,1,8.1,300000,
+2024-08-19,매도,89,39.3,5000000,92127135
+2024-04-22,매수,1,31.6,28792.1,
+2024-03-14,매수,0,45.5,27309.5,
+2023-10-30,매수,1,14.8,63532,
+2023-08-22,매수,1,22.7,47691,
+2023-05-30,매수,5,24.6,266258.6,
+2023-02-28,매수,6,14.4,314830.8,
+2023-02-07,매수,10,16.2,540604.8,
+2023-02-03,매수,38,16.8,2000000,
+2022-10-06,매수,7,11.3,476206.6,
+2022-06-24,매수,13,14.6,700000,
+2022-05-04,매수,8,25.7,275711.5,
+2022-01-11,매도,42,59.1,826989.7,13053801
+2021-11-03,매수,50,52.1,1000000,
+2021-09-22,매수,8,44.5,176337.3,
+2021-06-08,매도,20,39.8,477642,7363387
+2021-04-19,매도,42,41.7,955284.1,16607744
+2021-02-01,매수,2,35.1,46939.7,
+2020-12-14,매수,23,29,555793.8,
+2020-11-10,매수,49,22,1307834.6,
+2020-10-13,매도,34,21.2,959923.2,12065316
+2020-04-27,매수,52,8.7,1919846.5,`;
 const S = {
   name:'', rows:[], i:0, start:0, view:140, viewEnd:null, tapMark:null, yZoom:1, yOffset:0,
   initCash:10000000, cash:0, qty:0, avg:0, realized:0, fees:0,
@@ -912,10 +945,25 @@ async function restore(){
   if(!window.storage) return false;
   try{
     const r=await window.storage.get('replay:main', false);
-    if(!r||!r.value) return false;
+    if(!r||!r.value){
+      loadEmbeddedData();
+      return false;
+    }
     applyPayload(JSON.parse(r.value));
     return true;
-  }catch(e){ return false; }
+  }catch(e){
+    loadEmbeddedData();
+    return false;
+  }
+}
+function loadEmbeddedData(){
+  const csv = EMBEDDED_DATA.split('\n').map(line=>{
+    const [date,side,pct,price,qty]=line.split(',');
+    return [date,price,price,price,price,qty].join(',');
+  }).join('\n');
+  $('#dPaste').value=csv;
+  $('#dName').value='거래기록';
+  setTimeout(()=>$('#bLoadPaste').click(),100);
 }
 async function listSlots(){
   if(!window.storage) return [];
