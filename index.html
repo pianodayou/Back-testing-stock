@@ -138,7 +138,8 @@
   </div>
   <div class="row">
     <label>수량</label>
-    <input id="oQty" type="number" step="any" inputmode="decimal" value="1">
+    <input id="oQty" type="number" step="any" inputmode="decimal" value="1" oninput="$('#oQtyDisplay').textContent=fmt(+this.value||0,1)">
+    <span id="oQtyDisplay" class="num" style="margin-left:8px;min-width:80px">1</span>
   </div>
   <div class="row chips" id="pct">
     <button data-v="10">현금10%</button>
@@ -985,10 +986,14 @@ $('#otype').onclick=e=>{ const b=e.target.closest('button'); if(!b) return;
   $('#priceRow').style.display=S.otype==='market'?'none':'flex'; };
 $('#pct').onclick=e=>{ const b=e.target.closest('button'); if(!b||!bar()) return;
   const p=S.otype==='market'?bar().c:(+$('#oPrice').value||bar().c);
-  $('#oQty').value=+((S.cash*(+b.dataset.v)/100)/p).toFixed(4); };
+  const qtyVal=+((S.cash*(+b.dataset.v)/100)/p).toFixed(4);
+  $('#oQty').value=qtyVal;
+  $('#oQtyDisplay').textContent=fmt(qtyVal,1); };
 $('#pctQty').onclick=e=>{ const b=e.target.closest('button'); if(!b) return;
   if(!S.qty) return toast('보유 수량 없음');
-  $('#oQty').value=+(Math.abs(S.qty)*(+b.dataset.v)/100).toFixed(4); };
+  const qtyVal=+(Math.abs(S.qty)*(+b.dataset.v)/100).toFixed(4);
+  $('#oQty').value=qtyVal;
+  $('#oQtyDisplay').textContent=fmt(qtyVal,1); };
 $('#bBuy').onclick=()=>order('buy');
 $('#bSell').onclick=()=>order('sell');
 $('#bDcaBuy').onclick=()=>{ if(!bar()) return toast('데이터부터');
@@ -1208,7 +1213,7 @@ function buildMultiCharts(){
       '<span class="num" id="mRet'+i+'" style="font-size:12.5px;margin-left:6px">—</span></div>'+
       '<div class="row" style="margin-bottom:4px;font-size:11px;color:var(--tx2);gap:8px">'+
       '<span>평단 <b class="num" id="mAvg'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mAvgRet'+i+'">—</b></span>'+
-      '<span>주식 <b class="num" id="mStk'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mStkP'+i+'" style="color:var(--tx)">—</b></span>'+
+      '<span>주식 <b class="num" id="mStk'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mStkP'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mQty'+i+'" style="color:var(--tx)">—</b></span>'+
       '<span>현금 <b class="num" id="mCsh'+i+'" style="color:var(--tx)">—</b> <b class="num" id="mCshP'+i+'" style="color:var(--tx)">—</b></span>'+
       '</div>'+
       '<canvas id="mCv'+i+'" style="width:100%;height:110px;border-radius:8px;background:#101722;display:block"></canvas>'+
@@ -1425,7 +1430,7 @@ function renderMulti(){
     $('#mRet'+i).textContent=pct(ret); $('#mRet'+i).className='num '+cls(ret);
     const stockPct=eq>0?stockVal/eq*100:0, cashPct=eq>0?cash/eq*100:0;
     const posRet=(qty>0&&avg>0)?(price-avg)/avg*100:null;
-    const elAvg=$('#mAvg'+i), elAvgRet=$('#mAvgRet'+i), elStk=$('#mStk'+i), elStkP=$('#mStkP'+i), elCsh=$('#mCsh'+i), elCshP=$('#mCshP'+i);
+    const elAvg=$('#mAvg'+i), elAvgRet=$('#mAvgRet'+i), elStk=$('#mStk'+i), elStkP=$('#mStkP'+i), elQty=$('#mQty'+i), elCsh=$('#mCsh'+i), elCshP=$('#mCshP'+i);
     if(elAvg) elAvg.textContent=qty>0?fmt(avg):'—';
     if(elAvgRet){
       if(posRet!=null){ elAvgRet.textContent=pct(posRet); elAvgRet.className='num '+cls(posRet); }
@@ -1433,6 +1438,7 @@ function renderMulti(){
     }
     if(elStk) elStk.textContent=fmt(stockVal,0);
     if(elStkP) elStkP.textContent='('+stockPct.toFixed(0)+'%)';
+    if(elQty) elQty.textContent=qty>0?fmt(qty,1):'—';
     if(elCsh) elCsh.textContent=fmt(cash,0);
     if(elCshP) elCshP.textContent='('+cashPct.toFixed(0)+'%)';
   });
