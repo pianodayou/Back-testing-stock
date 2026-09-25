@@ -235,8 +235,8 @@
   </div>
   <div class="row" style="justify-content:center;margin:4px 0"><b id="mCurDate" class="num" style="font-size:13px">—</b></div>
   <div id="multiCharts"></div>
-  <h3 style="font-size:13px;margin:14px 0 4px">구간별 수익률 비교 (각 시뮬 자체 시작일 기준)</h3>
-  <p class="note" style="margin-top:0">각 시뮬레이션이 시작된 날짜부터 6개월 단위로 누적 수익률을 계산해. "최근1년"은 그 시점 기준 직전 12개월 동안의 수익률(누적 아님, 롤링 구간)이야. 데이터가 그 시점까지 없으면 — 로 표시돼.</p>
+  <h3 style="font-size:13px;margin:14px 0 4px">반기별 수익률 비교</h3>
+  <p class="note" style="margin-top:0">행은 달력 기준 반기(1~6월, 7~12월) 시작일. 각 칸 위 숫자는 그 반기 동안의 수익률, 아래 작은 숫자는 그 반기 끝을 기준으로 한 직전 1년 수익률이야. 시뮬레이션이 그 반기 중간에 시작·종료됐으면 실제로 데이터가 있는 구간만 계산해(예: 4월 8일 시작이면 1~6월 칸은 4/8~6/30만). 겹치는 데이터가 전혀 없으면 —.</p>
   <div id="multiPeriodWrap"></div>
   <p class="note">이미 끝까지 재생됐던 슬롯은 그 지점부터는 캔들만 계속 움직이고 평가금액은 마지막 기록값에서 멈춰 — 그 이후는 실제로 뭘 샀는지 모르니까 숫자를 지어내지 않는 거야. 각 슬롯의 "+ 가상 매매" 버튼으로 현재 재생 시점에 매수·매도를 끼워넣어볼 수 있어 — 매수는 그 시점 현금의 %, 매도는 그 시점 보유수량의 %로 계산되고, 그 뒤에 원래 있던 매매들도 전부 이 가상 매매가 반영된 현금·수량 기준으로 다시 계산돼.</p>
 </section>
@@ -1230,59 +1230,54 @@ function buildMultiCharts(){
   attachMultiDrag();
   document.querySelectorAll('.mTradeBtn').forEach(b=>b.onclick=()=>openTradeSheet(+b.dataset.idx));
 }
-function periodLabel(n){
-  const months=6*n, yrs=months/12;
-  return (Number.isInteger(yrs)?yrs:yrs.toFixed(1))+'년';
+function floorHalfStart(dateStr){
+  const y=dateStr.slice(0,4), m=+dateStr.slice(5,7);
+  return y+'-'+(m<=6?'01-01':'07-01');
 }
-function periodRetAt(sl, dateStr){
-  const lastDate=sl.rows[sl.rows.length-1].t;
-  if(dateStr>lastDate) return null;
-  const {eq, base}=multiEquityAtDate(sl, dateStr);
-  if(!(base>0)) return null;
-  return {eq, base, ret:(eq-base)/base*100};
+function periodReturn(sl, dA, dB){
+  if(!(dA<dB)) return null;
+  const a=multiEquityAtDate(sl,dA), b=multiEquityAtDate(sl,dB);
+  if(!(a.eq>0)) return null;
+  const inj=b.base-a.base;
+  return (b.eq-a.eq-inj)/a.eq*100;
 }
 function buildPeriodTable(){
   const wrap=$('#multiPeriodWrap'); if(!wrap) return;
   const loaded=MULTI.slots.map((sl,i)=>sl?{sl,i}:null).filter(Boolean);
   if(!loaded.length){ wrap.innerHTML=''; return; }
-  let maxN=0;
+  let minStart=null, maxEnd=null;
   loaded.forEach(({sl})=>{
-    const start=sl.rows[0].t, last=sl.rows[sl.rows.length-1].t;
-    let n=0;
-    while(addMonths(start,6*(n+1))<=last) n++;
-    if(n>maxN) maxN=n;
+    const s=sl.rows[0].t, e=sl.rows[sl.rows.length-1].t;
+    if(minStart===null||s<minStart) minStart=s;
+    if(maxEnd===null||e>maxEnd) maxEnd=e;
   });
-  if(maxN<1){ wrap.innerHTML='<p class="note">기간이 짧아 6개월 구간을 계산할 데이터가 부족해.</p>'; return; }
+  const firstHalf=floorHalfStart(minStart), lastHalf=floorHalfStart(maxEnd);
+  const halves=[]; let h=firstHalf;
+  while(h<=lastHalf){ halves.push(h); h=addMonths(h,6); }
+  if(!halves.length){ wrap.innerHTML=''; return; }
   let html='<div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table style="table-layout:fixed;width:100%"><thead><tr>'+
-    '<th style="width:56px">구간</th>'+
+    '<th style="width:56px">반기</th>'+
     loaded.map(({sl})=>'<th style="width:'+Math.floor(70/loaded.length)+'%">'+sl.name+'</th>').join('')+
     '</tr></thead><tbody>';
-  for(let n=1;n<=maxN;n++){
-    const months=6*n, label=periodLabel(n);
-    html+='<tr><td>'+label+' 후</td>';
+  halves.forEach(hStart=>{
+    const hEnd=addMonths(hStart,6);
+    html+='<tr><td>'+hStart.slice(0,7)+'</td>';
     loaded.forEach(({sl})=>{
-      const start=sl.rows[0].t;
-      const cpDate=addMonths(start, months);
-      const cum=periodRetAt(sl, cpDate);
+      const simFirst=sl.rows[0].t, simLast=sl.rows[sl.rows.length-1].t;
+      const cStart=hStart>simFirst?hStart:simFirst, cEnd=hEnd<simLast?hEnd:simLast;
+      const halfRet=periodReturn(sl,cStart,cEnd);
       let cell='—';
-      if(cum){
-        cell='<span class="num '+cls(cum.ret)+'">누적 '+pct(cum.ret)+'</span>';
-        if(months>=12){
-          const trailStart=addMonths(cpDate,-12);
-          const base1=periodRetAt(sl, trailStart);
-          if(base1){
-            const injDuring=cum.base-base1.base;
-            if(base1.eq>0){
-              const trailRet=(cum.eq-base1.eq-injDuring)/base1.eq*100;
-              cell+='<br><span class="num '+cls(trailRet)+'" style="font-size:11px">최근1년 '+pct(trailRet)+'</span>';
-            }
-          }
-        }
+      if(halfRet!=null){
+        cell='<span class="num '+cls(halfRet)+'">'+pct(halfRet)+'</span>';
+        const tStart=addMonths(hEnd,-12);
+        const tcStart=tStart>simFirst?tStart:simFirst, tcEnd=hEnd<simLast?hEnd:simLast;
+        const trailRet=periodReturn(sl,tcStart,tcEnd);
+        if(trailRet!=null) cell+='<br><span class="num '+cls(trailRet)+'" style="font-size:11px">'+pct(trailRet)+'</span>';
       }
       html+='<td>'+cell+'</td>';
     });
     html+='</tr>';
-  }
+  });
   html+='</tbody></table></div>';
   wrap.innerHTML=html;
 }
