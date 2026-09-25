@@ -235,6 +235,9 @@
   </div>
   <div class="row" style="justify-content:center;margin:4px 0"><b id="mCurDate" class="num" style="font-size:13px">—</b></div>
   <div id="multiCharts"></div>
+  <h3 style="font-size:13px;margin:14px 0 4px">구간별 수익률 비교 (각 시뮬 자체 시작일 기준)</h3>
+  <p class="note" style="margin-top:0">각 시뮬레이션이 시작된 날짜부터 6개월 단위로 누적 수익률을 계산해. "최근1년"은 그 시점 기준 직전 12개월 동안의 수익률(누적 아님, 롤링 구간)이야. 데이터가 그 시점까지 없으면 — 로 표시돼.</p>
+  <div id="multiPeriodWrap"></div>
   <p class="note">이미 끝까지 재생됐던 슬롯은 그 지점부터는 캔들만 계속 움직이고 평가금액은 마지막 기록값에서 멈춰 — 그 이후는 실제로 뭘 샀는지 모르니까 숫자를 지어내지 않는 거야. 각 슬롯의 "+ 가상 매매" 버튼으로 현재 재생 시점에 매수·매도를 끼워넣어볼 수 있어 — 매수는 그 시점 현금의 %, 매도는 그 시점 보유수량의 %로 계산되고, 그 뒤에 원래 있던 매매들도 전부 이 가상 매매가 반영된 현금·수량 기준으로 다시 계산돼.</p>
 </section>
 
@@ -1227,6 +1230,62 @@ function buildMultiCharts(){
   attachMultiDrag();
   document.querySelectorAll('.mTradeBtn').forEach(b=>b.onclick=()=>openTradeSheet(+b.dataset.idx));
 }
+function periodLabel(n){
+  const months=6*n, yrs=months/12;
+  return (Number.isInteger(yrs)?yrs:yrs.toFixed(1))+'년';
+}
+function periodRetAt(sl, dateStr){
+  const lastDate=sl.rows[sl.rows.length-1].t;
+  if(dateStr>lastDate) return null;
+  const {eq, base}=multiEquityAtDate(sl, dateStr);
+  if(!(base>0)) return null;
+  return {eq, base, ret:(eq-base)/base*100};
+}
+function buildPeriodTable(){
+  const wrap=$('#multiPeriodWrap'); if(!wrap) return;
+  const loaded=MULTI.slots.map((sl,i)=>sl?{sl,i}:null).filter(Boolean);
+  if(!loaded.length){ wrap.innerHTML=''; return; }
+  let maxN=0;
+  loaded.forEach(({sl})=>{
+    const start=sl.rows[0].t, last=sl.rows[sl.rows.length-1].t;
+    let n=0;
+    while(addMonths(start,6*(n+1))<=last) n++;
+    if(n>maxN) maxN=n;
+  });
+  if(maxN<1){ wrap.innerHTML='<p class="note">기간이 짧아 6개월 구간을 계산할 데이터가 부족해.</p>'; return; }
+  let html='<div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table style="table-layout:fixed;width:100%"><thead><tr>'+
+    '<th style="width:56px">구간</th>'+
+    loaded.map(({sl})=>'<th style="width:'+Math.floor(70/loaded.length)+'%">'+sl.name+'</th>').join('')+
+    '</tr></thead><tbody>';
+  for(let n=1;n<=maxN;n++){
+    const months=6*n, label=periodLabel(n);
+    html+='<tr><td>'+label+' 후</td>';
+    loaded.forEach(({sl})=>{
+      const start=sl.rows[0].t;
+      const cpDate=addMonths(start, months);
+      const cum=periodRetAt(sl, cpDate);
+      let cell='—';
+      if(cum){
+        cell='<span class="num '+cls(cum.ret)+'">누적 '+pct(cum.ret)+'</span>';
+        if(months>=12){
+          const trailStart=addMonths(cpDate,-12);
+          const base1=periodRetAt(sl, trailStart);
+          if(base1){
+            const injDuring=cum.base-base1.base;
+            if(base1.eq>0){
+              const trailRet=(cum.eq-base1.eq-injDuring)/base1.eq*100;
+              cell+='<br><span class="num '+cls(trailRet)+'" style="font-size:11px">최근1년 '+pct(trailRet)+'</span>';
+            }
+          }
+        }
+      }
+      html+='<td>'+cell+'</td>';
+    });
+    html+='</tr>';
+  }
+  html+='</tbody></table></div>';
+  wrap.innerHTML=html;
+}
 function addMonths(dateStr, months){
   const d=new Date(dateStr.slice(0,10)+'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth()+months);
   return d.toISOString().slice(0,10);
@@ -1284,7 +1343,7 @@ async function loadMultiSlots(){
     }catch(e){ MULTI.slots[i]=null; toast('슬롯 '+(i+1)+' 로드 실패: '+e.message); }
   }
   buildGlobalTimeline();
-  buildMultiCharts(); renderMulti();
+  buildMultiCharts(); renderMulti(); buildPeriodTable();
   toast('불러왔어');
 }
 function recomputeSlot(sl){
@@ -1545,7 +1604,7 @@ $('#mTradeConfirm').onclick=()=>{
   sl.vidSeq=sl.vidSeq||1;
   sl.extraLog.push({d:date, side:mTradeSide, pctOfEq:pct, p:price, _vid:sl.vidSeq++});
   recomputeSlot(sl);
-  buildMultiCharts(); renderMulti();
+  buildMultiCharts(); renderMulti(); buildPeriodTable();
   $('#mTradeSheet').style.display='none';
   toast('가상 매매 끼워넣음 — 이후 매매·평단·평가액 다시 계산됨');
 };
@@ -1554,7 +1613,7 @@ $('#mTradeClearAll').onclick=()=>{
   const sl=MULTI.slots[mTradeIdx]; if(!sl) return;
   sl.extraLog=[]; sl.excludedOid=new Set();
   recomputeSlot(sl);
-  buildMultiCharts(); renderMulti();
+  buildMultiCharts(); renderMulti(); buildPeriodTable();
   $('#mTradeSheet').style.display='none';
   toast('가상 매매·뺀 매매 모두 원상복구함');
 };
@@ -1583,14 +1642,14 @@ function renderLogSheet(){
     const oid=+b.dataset.oid;
     if(sl.excludedOid.has(oid)) sl.excludedOid.delete(oid); else sl.excludedOid.add(oid);
     recomputeSlot(sl);
-    buildMultiCharts(); renderMulti();
+    buildMultiCharts(); renderMulti(); buildPeriodTable();
     renderLogSheet();
   });
   document.querySelectorAll('.mLogDelVirtual').forEach(b=>b.onclick=()=>{
     const vid=+b.dataset.vid;
     sl.extraLog=(sl.extraLog||[]).filter(t=>t._vid!==vid);
     recomputeSlot(sl);
-    buildMultiCharts(); renderMulti();
+    buildMultiCharts(); renderMulti(); buildPeriodTable();
     renderLogSheet();
   });
 }
