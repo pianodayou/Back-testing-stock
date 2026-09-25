@@ -236,7 +236,7 @@
   <div class="row" style="justify-content:center;margin:4px 0;position:sticky;top:0;background:var(--bg);z-index:6;padding:6px 0;border-bottom:1px solid var(--line)"><b id="mCurDate" class="num" style="font-size:13px">—</b></div>
   <div id="multiCharts"></div>
   <h3 style="font-size:13px;margin:14px 0 4px">반기별 수익률 비교</h3>
-  <p class="note" style="margin-top:0">행은 달력 기준 반기(1~6월, 7~12월) 시작일. 각 칸 위 숫자는 그 반기 동안의 수익률, 아래 작은 숫자는 그 반기 끝을 기준으로 한 직전 1년 수익률이야. 괄호 안 "실현" 숫자는 같은 기간 동안 실제로 체결된 매도의 실현손익을 그 기간 시작 시점의 총평가액(주식+현금)으로 나눈 값 — 미실현 평가손익은 빼고 실제로 확정된 손익만 봄. 시뮬레이션이 그 반기 중간에 시작·종료됐으면 실제로 데이터가 있는 구간만 계산해(예: 4월 8일 시작이면 1~6월 칸은 4/8~6/30만). 겹치는 데이터가 전혀 없으면 —.</p>
+  <p class="note" style="margin-top:0">행은 달력 기준 반기(1~6월, 7~12월) 시작일. 각 칸 위 숫자는 그 반기 동안의 수익률, 아래 작은 숫자는 그 반기 끝을 기준으로 한 직전 1년 수익률이야. 괄호 안 "실현" 숫자는 같은 기간 동안 실제로 체결된 매도의 실현손익을 그 기간 시작 시점의 총평가액(주식+현금)으로 나눈 값 — 미실현 평가손익은 빼고 실제로 확정된 손익만 봄. 맨 아래 줄 "(N년) X%"는 그 시뮬레이션이 실제로 시작한 첫 시점부터 이 칸 끝까지의 누적 수익률이야 — 시뮬레이션마다 시작일이 다르니까 몇 년째인지를 같이 표시함. 시뮬레이션이 그 반기 중간에 시작·종료됐으면 실제로 데이터가 있는 구간만 계산해(예: 4월 8일 시작이면 1~6월 칸은 4/8~6/30만). 겹치는 데이터가 전혀 없으면 —.</p>
   <div id="multiPeriodWrap"></div>
   <p class="note">이미 끝까지 재생됐던 슬롯은 그 지점부터는 캔들만 계속 움직이고 평가금액은 마지막 기록값에서 멈춰 — 그 이후는 실제로 뭘 샀는지 모르니까 숫자를 지어내지 않는 거야. 각 슬롯의 "+ 가상 매매" 버튼으로 현재 재생 시점에 매수·매도를 끼워넣어볼 수 있어 — 매수는 그 시점 현금의 %, 매도는 그 시점 보유수량의 %로 계산되고, 그 뒤에 원래 있던 매매들도 전부 이 가상 매매가 반영된 현금·수량 기준으로 다시 계산돼.</p>
 </section>
@@ -1241,6 +1241,10 @@ function periodStats(sl, dA, dB){
   const inj=b.base-a.base;
   return { ret:(b.eq-a.eq-inj)/a.eq*100, eqA:a.eq };
 }
+function yearsBetween(dA,dB){
+  const a=new Date(dA.slice(0,10)+'T00:00:00Z'), b=new Date(dB.slice(0,10)+'T00:00:00Z');
+  return (b-a)/(365.25*86400000);
+}
 function sumRealizedPnl(sl, dA, dB, inclusiveEnd){
   let s=0;
   (sl.log||[]).forEach(t=>{
@@ -1287,6 +1291,13 @@ function buildPeriodTable(){
           const trailPnlPct=sumRealizedPnl(sl,tcStart,tcEnd,tcEnd===simLast)/trail.eqA*100;
           cell+='<br><span class="num '+cls(trail.ret)+'" style="font-size:11px">'+pct(trail.ret)+'</span>'+
             '<span class="num mut" style="font-size:10px;margin-left:3px">(실현'+pct(trailPnlPct)+')</span>';
+        }
+        if(cEnd>simFirst){
+          const cum=periodStats(sl,simFirst,cEnd);
+          if(cum!=null){
+            const yrs=yearsBetween(simFirst,cEnd).toFixed(1);
+            cell+='<br><span class="num mut" style="font-size:10.5px">('+yrs+'년) '+pct(cum.ret)+'</span>';
+          }
         }
       }
       html+='<td>'+cell+'</td>';
