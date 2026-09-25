@@ -233,10 +233,10 @@
     <button class="ghost" id="mZOut" style="flex:0 0 52px">축소－</button>
     <button class="ghost" id="mLive" style="flex:1;display:none">현재로 ↦</button>
   </div>
-  <div class="row" style="justify-content:center;margin:4px 0"><b id="mCurDate" class="num" style="font-size:13px">—</b></div>
+  <div class="row" style="justify-content:center;margin:4px 0;position:sticky;top:0;background:var(--bg);z-index:6;padding:6px 0;border-bottom:1px solid var(--line)"><b id="mCurDate" class="num" style="font-size:13px">—</b></div>
   <div id="multiCharts"></div>
   <h3 style="font-size:13px;margin:14px 0 4px">반기별 수익률 비교</h3>
-  <p class="note" style="margin-top:0">행은 달력 기준 반기(1~6월, 7~12월) 시작일. 각 칸 위 숫자는 그 반기 동안의 수익률, 아래 작은 숫자는 그 반기 끝을 기준으로 한 직전 1년 수익률이야. 시뮬레이션이 그 반기 중간에 시작·종료됐으면 실제로 데이터가 있는 구간만 계산해(예: 4월 8일 시작이면 1~6월 칸은 4/8~6/30만). 겹치는 데이터가 전혀 없으면 —.</p>
+  <p class="note" style="margin-top:0">행은 달력 기준 반기(1~6월, 7~12월) 시작일. 각 칸 위 숫자는 그 반기 동안의 수익률, 아래 작은 숫자는 그 반기 끝을 기준으로 한 직전 1년 수익률이야. 괄호 안 "실현" 숫자는 같은 기간 동안 실제로 체결된 매도의 실현손익을 그 기간 시작 시점의 총평가액(주식+현금)으로 나눈 값 — 미실현 평가손익은 빼고 실제로 확정된 손익만 봄. 시뮬레이션이 그 반기 중간에 시작·종료됐으면 실제로 데이터가 있는 구간만 계산해(예: 4월 8일 시작이면 1~6월 칸은 4/8~6/30만). 겹치는 데이터가 전혀 없으면 —.</p>
   <div id="multiPeriodWrap"></div>
   <p class="note">이미 끝까지 재생됐던 슬롯은 그 지점부터는 캔들만 계속 움직이고 평가금액은 마지막 기록값에서 멈춰 — 그 이후는 실제로 뭘 샀는지 모르니까 숫자를 지어내지 않는 거야. 각 슬롯의 "+ 가상 매매" 버튼으로 현재 재생 시점에 매수·매도를 끼워넣어볼 수 있어 — 매수는 그 시점 현금의 %, 매도는 그 시점 보유수량의 %로 계산되고, 그 뒤에 원래 있던 매매들도 전부 이 가상 매매가 반영된 현금·수량 기준으로 다시 계산돼.</p>
 </section>
@@ -1234,12 +1234,21 @@ function floorHalfStart(dateStr){
   const y=dateStr.slice(0,4), m=+dateStr.slice(5,7);
   return y+'-'+(m<=6?'01-01':'07-01');
 }
-function periodReturn(sl, dA, dB){
+function periodStats(sl, dA, dB){
   if(!(dA<dB)) return null;
   const a=multiEquityAtDate(sl,dA), b=multiEquityAtDate(sl,dB);
   if(!(a.eq>0)) return null;
   const inj=b.base-a.base;
-  return (b.eq-a.eq-inj)/a.eq*100;
+  return { ret:(b.eq-a.eq-inj)/a.eq*100, eqA:a.eq };
+}
+function sumRealizedPnl(sl, dA, dB, inclusiveEnd){
+  let s=0;
+  (sl.log||[]).forEach(t=>{
+    if(t.pnl==null || t.d<dA) return;
+    if(inclusiveEnd ? t.d>dB : t.d>=dB) return;
+    s+=t.pnl;
+  });
+  return s;
 }
 function buildPeriodTable(){
   const wrap=$('#multiPeriodWrap'); if(!wrap) return;
@@ -1265,14 +1274,20 @@ function buildPeriodTable(){
     loaded.forEach(({sl})=>{
       const simFirst=sl.rows[0].t, simLast=sl.rows[sl.rows.length-1].t;
       const cStart=hStart>simFirst?hStart:simFirst, cEnd=hEnd<simLast?hEnd:simLast;
-      const halfRet=periodReturn(sl,cStart,cEnd);
+      const half=periodStats(sl,cStart,cEnd);
       let cell='—';
-      if(halfRet!=null){
-        cell='<span class="num '+cls(halfRet)+'">'+pct(halfRet)+'</span>';
+      if(half!=null){
+        const halfPnlPct=sumRealizedPnl(sl,cStart,cEnd,cEnd===simLast)/half.eqA*100;
+        cell='<span class="num '+cls(half.ret)+'">'+pct(half.ret)+'</span>'+
+          '<span class="num mut" style="font-size:10.5px;margin-left:3px">(실현'+pct(halfPnlPct)+')</span>';
         const tStart=addMonths(hEnd,-12);
         const tcStart=tStart>simFirst?tStart:simFirst, tcEnd=hEnd<simLast?hEnd:simLast;
-        const trailRet=periodReturn(sl,tcStart,tcEnd);
-        if(trailRet!=null) cell+='<br><span class="num '+cls(trailRet)+'" style="font-size:11px">'+pct(trailRet)+'</span>';
+        const trail=periodStats(sl,tcStart,tcEnd);
+        if(trail!=null){
+          const trailPnlPct=sumRealizedPnl(sl,tcStart,tcEnd,tcEnd===simLast)/trail.eqA*100;
+          cell+='<br><span class="num '+cls(trail.ret)+'" style="font-size:11px">'+pct(trail.ret)+'</span>'+
+            '<span class="num mut" style="font-size:10px;margin-left:3px">(실현'+pct(trailPnlPct)+')</span>';
+        }
       }
       html+='<td>'+cell+'</td>';
     });
